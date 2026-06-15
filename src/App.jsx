@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   ChevronDown,
   CheckCircle2,
@@ -310,27 +310,24 @@ const WEEK_LABELS = {
 };
 
 export default function OrchestratorTracker() {
-  const [progress, setProgress] = useState({});
-  const [loaded, setLoaded] = useState(false);
+  const [progress, setProgress] = useState(() => {
+    try {
+      const raw = localStorage.getItem("orchestrateur-progress");
+      if (raw) return JSON.parse(raw);
+    } catch {
+      // pas encore de données enregistrées, ou localStorage indisponible
+    }
+    return {};
+  });
   const [openItems, setOpenItems] = useState(new Set(["p1-a"]));
   const [openWeeks, setOpenWeeks] = useState(new Set([1]));
   const [saveError, setSaveError] = useState(false);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("orchestrateur-progress");
-      if (raw) setProgress(JSON.parse(raw));
-    } catch (e) {
-      // pas encore de données enregistrées, ou localStorage indisponible
-    }
-    setLoaded(true);
-  }, []);
 
   const persist = (next) => {
     try {
       localStorage.setItem("orchestrateur-progress", JSON.stringify(next));
       setSaveError(false);
-    } catch (e) {
+    } catch {
       setSaveError(true);
     }
   };
@@ -936,7 +933,7 @@ export default function OrchestratorTracker() {
           ta progression — tout est sauvegardé automatiquement.
         </p>
         <div className="orch-progress-wrap">
-          <div className="orch-progress-pct">{loaded ? `${overallPct}%` : "…"}</div>
+          <div className="orch-progress-pct">{overallPct}%</div>
           <div className="orch-graph">
             {PHASES.map((phase, idx) => {
               const pct = phasePct(phase);
