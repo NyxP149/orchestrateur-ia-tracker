@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   ChevronDown,
   CheckCircle2,
@@ -11,6 +11,9 @@ import {
   Square,
   CheckSquare,
 } from "lucide-react";
+import { supabase } from "./supabaseClient";
+
+const ROADMAP_ID = "onyx-roadmap";
 
 const PHASES = [
   {
@@ -310,29 +313,61 @@ const WEEK_LABELS = {
 };
 
 export default function OrchestratorTracker() {
-  const [progress, setProgress] = useState({});
-  const [loaded, setLoaded] = useState(false);
-  const [openItems, setOpenItems] = useState(new Set(["p1-a"]));
-  const [openWeeks, setOpenWeeks] = useState(new Set([1]));
-  const [saveError, setSaveError] = useState(false);
-
-  useEffect(() => {
+  const [progress, setProgress] = useState(() => {
     try {
       const raw = localStorage.getItem("orchestrateur-progress");
-      if (raw) setProgress(JSON.parse(raw));
-    } catch (e) {
+      if (raw) return JSON.parse(raw);
+    } catch {
       // pas encore de données enregistrées, ou localStorage indisponible
     }
-    setLoaded(true);
+    return {};
+  });
+  const [openItems, setOpenItems] = useState(new Set(["p1-a"]));
+  const [openWeeks, setOpenWeeks] = useState(new Set([1]));
+  const [syncStatus, setSyncStatus] = useState("local"); // "local" | "syncing" | "synced" | "error"
+  const saveTimeout = useRef(null);
+
+  // Au chargement : on essaie de récupérer la version cloud (peut être plus récente
+  // que le cache local si modifiée depuis un autre appareil).
+  useEffect(() => {
+    let active = true;
+    supabase
+      .from("roadmap_progress")
+      .select("data")
+      .eq("id", ROADMAP_ID)
+      .single()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (!error && data && data.data) {
+          setProgress(data.data);
+          try {
+            localStorage.setItem("orchestrateur-progress", JSON.stringify(data.data));
+          } catch {
+            // pas grave, le cloud reste la source de vérité
+          }
+          setSyncStatus("synced");
+        }
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const persist = (next) => {
     try {
       localStorage.setItem("orchestrateur-progress", JSON.stringify(next));
-      setSaveError(false);
-    } catch (e) {
-      setSaveError(true);
+    } catch {
+      // cache local indisponible, on continue avec le cloud
     }
+    setSyncStatus("syncing");
+    if (saveTimeout.current) clearTimeout(saveTimeout.current);
+    saveTimeout.current = setTimeout(async () => {
+      const { error } = await supabase
+        .from("roadmap_progress")
+        .update({ data: next, updated_at: new Date().toISOString() })
+        .eq("id", ROADMAP_ID);
+      setSyncStatus(error ? "error" : "synced");
+    }, 800);
   };
 
   const getItem = (id) => progress[id] || { status: "todo", notes: "" };
@@ -936,7 +971,7 @@ export default function OrchestratorTracker() {
           ta progression — tout est sauvegardé automatiquement.
         </p>
         <div className="orch-progress-wrap">
-          <div className="orch-progress-pct">{loaded ? `${overallPct}%` : "…"}</div>
+          <div className="orch-progress-pct">{overallPct}%</div>
           <div className="orch-graph">
             {PHASES.map((phase, idx) => {
               const pct = phasePct(phase);
@@ -1252,7 +1287,13 @@ export default function OrchestratorTracker() {
       </div>
 
       <div className="orch-footer">
-        {saveError ? "Sauvegarde indisponible pour le moment — réessaie plus tard." : "Progression sauvegardée automatiquement"}
+        {syncStatus === "syncing"
+          ? "Synchronisation..."
+          : syncStatus === "error"
+          ? "Sauvegardé en local — synchronisation cloud indisponible pour le moment"
+          : syncStatus === "synced"
+          ? "Synchronisé (local + cloud)"
+          : "Sauvegardé en local"}
       </div>
     </div>
   );
